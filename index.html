@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily5 — The Anti-Hoarding Link Queue</title>
+    <meta name="description" content="A link queue with a hard limit of 5. Save less, read more. No account, no sync, no excuses.">
+    <link rel="canonical" href="https://daily5.app">
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        input:focus, button:focus-visible { outline: none; }
+        .slot-enter { animation: slideIn 0.2s ease-out; }
+        .slot-exit { animation: fadeOut 0.15s ease-in forwards; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeOut { to { opacity: 0; transform: translateX(20px); } }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 font-sans min-h-screen flex flex-col selection:bg-emerald-500 selection:text-zinc-950">
+
+    <!-- Header -->
+    <header class="border-b border-zinc-800/80 bg-zinc-900/40 backdrop-blur-sm px-6 py-4 sticky top-0 z-10">
+        <div class="max-w-2xl mx-auto flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></div>
+                <h1 class="text-lg font-mono tracking-wider text-zinc-200">DAILY5</h1>
+            </div>
+            <div class="flex items-center space-x-4">
+                <span id="slotBadge" class="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded">0 / 5</span>
+                <button id="clearAllBtn" class="hidden text-[10px] font-mono text-zinc-600 hover:text-red-400 cursor-pointer transition">CLEAR ALL</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main -->
+    <main class="flex-1 max-w-2xl w-full mx-auto p-4 md:p-6 flex flex-col space-y-4">
+
+        <!-- Input -->
+        <div id="inputSection" class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 transition">
+            <div class="flex space-x-3">
+                <input id="urlInput" type="url"
+                    placeholder="Paste a link..."
+                    class="flex-1 bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-4 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 font-mono focus:border-emerald-500/50 transition">
+                <button id="addBtn" class="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 px-4 py-2.5 rounded-lg font-mono text-sm transition cursor-pointer">ADD</button>
+            </div>
+            <p id="inputMessage" class="hidden text-[11px] mt-2 font-mono"></p>
+        </div>
+
+        <!-- Queue -->
+        <div id="queueContainer" class="space-y-2">
+            <!-- Items rendered here -->
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="flex-1 flex flex-col items-center justify-center py-16 text-center">
+            <p class="text-zinc-500 font-mono text-sm tracking-wide">Queue Clear // Canvas Calm</p>
+            <p class="text-zinc-700 text-xs mt-2">No lingering tabs or reading debt cluttering your focus space.</p>
+        </div>
+
+        <!-- Cross-sell -->
+        <div class="text-center py-2 mt-auto">
+            <p class="text-[11px] text-zinc-600">
+                Clean up pasted text? <a href="https://opera10r.github.io/CleanCopy/" class="text-emerald-600 hover:text-emerald-400 transition">CleanCopy</a>
+                &middot; Structure it? <a href="https://opera10r.github.io/ClipMarkdown/" class="text-emerald-600 hover:text-emerald-400 transition">ClipMarkdown</a>
+            </p>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-zinc-900/60 py-3 px-6 text-center">
+        <p class="text-[10px] text-zinc-700 font-mono">
+            Stored in your browser. No account. No sync. No excuses.
+            <span class="mx-2">&middot;</span>
+            Built by <a href="https://ravensgate.media" class="text-zinc-500 hover:text-zinc-400 transition">Raven's Gate</a>
+        </p>
+    </footer>
+
+    <!-- Engine -->
+    <script>
+    (function() {
+        'use strict';
+
+        const MAX_SLOTS = 5;
+        const STORAGE_KEY = 'daily5_queue';
+
+        const $ = id => document.getElementById(id);
+        const urlInput = $('urlInput');
+        const addBtn = $('addBtn');
+        const clearAllBtn = $('clearAllBtn');
+        const queueContainer = $('queueContainer');
+        const emptyState = $('emptyState');
+        const slotBadge = $('slotBadge');
+        const inputSection = $('inputSection');
+        const inputMessage = $('inputMessage');
+
+        // ---- DATA ----
+
+        function loadQueue() {
+            try {
+                return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+            } catch { return []; }
+        }
+
+        function saveQueue(queue) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+        }
+
+        let queue = loadQueue();
+
+        // ---- URL HELPERS ----
+
+        function normalizeUrl(input) {
+            let url = input.trim();
+            if (!url) return null;
+            if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+            try { new URL(url); return url; }
+            catch { return null; }
+        }
+
+        function extractDomain(url) {
+            try { return new URL(url).hostname.replace(/^www\./, ''); }
+            catch { return 'link'; }
+        }
+
+        function isDuplicate(url) {
+            return queue.some(item => {
+                try {
+                    const a = new URL(item.url);
+                    const b = new URL(url);
+                    return a.hostname === b.hostname && a.pathname === b.pathname;
+                } catch { return item.url === url; }
+            });
+        }
+
+        // ---- TIME ----
+
+        function timeAgo(isoString) {
+            const seconds = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+            if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+            return new Date(isoString).toLocaleDateString();
+        }
+
+        // ---- SLOT NUMBERS ----
+
+        const slotNums = ['\u2460', '\u2461', '\u2462', '\u2463', '\u2464'];
+
+        // ---- RENDER ----
+
+        function render() {
+            const count = queue.length;
+            const isFull = count >= MAX_SLOTS;
+
+            // Badge
+            slotBadge.textContent = `${count} / ${MAX_SLOTS}`;
+            if (isFull) {
+                slotBadge.classList.remove('bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/20');
+                slotBadge.classList.add('bg-amber-500/10', 'text-amber-400', 'border-amber-500/20');
+            } else {
+                slotBadge.classList.remove('bg-amber-500/10', 'text-amber-400', 'border-amber-500/20');
+                slotBadge.classList.add('bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/20');
+            }
+
+            // Input state
+            urlInput.disabled = isFull;
+            addBtn.disabled = isFull;
+            if (isFull) {
+                inputSection.classList.add('opacity-50');
+                urlInput.placeholder = 'Queue full — clear one first';
+            } else {
+                inputSection.classList.remove('opacity-50');
+                urlInput.placeholder = 'Paste a link...';
+            }
+
+            // Clear all button
+            if (count > 0) clearAllBtn.classList.remove('hidden');
+            else clearAllBtn.classList.add('hidden');
+
+            // Empty state
+            if (count === 0) {
+                emptyState.classList.remove('hidden');
+                queueContainer.classList.add('hidden');
+            } else {
+                emptyState.classList.add('hidden');
+                queueContainer.classList.remove('hidden');
+            }
+
+            // Render items
+            queueContainer.innerHTML = '';
+            queue.forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = 'slot-enter bg-zinc-900/60 border border-zinc-800/60 rounded-xl p-4 hover:border-zinc-700/60 transition group';
+
+                const domain = extractDomain(item.url);
+                const ago = timeAgo(item.addedAt);
+
+                card.innerHTML = `
+                    <div class="flex items-start justify-between">
+                        <div class="flex items-center space-x-2.5 min-w-0">
+                            <span class="text-emerald-500/60 text-sm shrink-0">${slotNums[index]}</span>
+                            <span class="text-[10px] font-mono uppercase tracking-widest text-zinc-400 truncate">${domain}</span>
+                        </div>
+                        <span class="text-[10px] font-mono text-zinc-600 shrink-0 ml-2">${ago}</span>
+                    </div>
+                    <a href="${item.url}" target="_blank" rel="noopener noreferrer"
+                       class="block text-sm text-zinc-400 hover:text-emerald-400 mt-1.5 truncate font-mono transition">${item.url}</a>
+                    <div class="flex justify-end mt-2">
+                        <button data-index="${index}"
+                            class="clear-btn text-[10px] font-mono text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 sm:opacity-100 transition cursor-pointer px-2 py-1 rounded hover:bg-red-500/10">
+                            DONE / CLEAR
+                        </button>
+                    </div>
+                `;
+
+                queueContainer.appendChild(card);
+            });
+        }
+
+        // ---- SHOW MESSAGE ----
+
+        function showMessage(text, type) {
+            inputMessage.textContent = text;
+            inputMessage.classList.remove('hidden', 'text-red-400', 'text-amber-400', 'text-emerald-400');
+            inputMessage.classList.add(type === 'error' ? 'text-red-400' : type === 'warn' ? 'text-amber-400' : 'text-emerald-400');
+            setTimeout(() => inputMessage.classList.add('hidden'), 3000);
+        }
+
+        // ---- ADD ----
+
+        function addLink() {
+            if (queue.length >= MAX_SLOTS) return;
+
+            const url = normalizeUrl(urlInput.value);
+            if (!url) {
+                showMessage('Invalid URL', 'error');
+                return;
+            }
+
+            if (isDuplicate(url)) {
+                showMessage('Already in queue', 'warn');
+                return;
+            }
+
+            queue.push({
+                id: String(Date.now()),
+                url: url,
+                domain: extractDomain(url),
+                addedAt: new Date().toISOString(),
+            });
+
+            saveQueue(queue);
+            urlInput.value = '';
+            render();
+        }
+
+        // ---- CLEAR ----
+
+        function clearItem(index) {
+            const card = queueContainer.children[index];
+            if (card) {
+                card.classList.add('slot-exit');
+                setTimeout(() => {
+                    queue.splice(index, 1);
+                    saveQueue(queue);
+                    render();
+                }, 150);
+            } else {
+                queue.splice(index, 1);
+                saveQueue(queue);
+                render();
+            }
+        }
+
+        // ---- EVENTS ----
+
+        addBtn.addEventListener('click', addLink);
+
+        urlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addLink(); }
+            if (e.key === 'Escape') { urlInput.value = ''; }
+        });
+
+        queueContainer.addEventListener('click', (e) => {
+            const btn = e.target.closest('.clear-btn');
+            if (btn) {
+                const index = parseInt(btn.dataset.index, 10);
+                clearItem(index);
+            }
+        });
+
+        clearAllBtn.addEventListener('click', () => {
+            if (queue.length === 0) return;
+            if (confirm('Clear all links? This cannot be undone.')) {
+                queue = [];
+                saveQueue(queue);
+                render();
+            }
+        });
+
+        // Keyboard shortcuts: 1-5 to open, Shift+1-5 to clear
+        document.addEventListener('keydown', (e) => {
+            if (e.target === urlInput) return;
+            const num = parseInt(e.key, 10);
+            if (num >= 1 && num <= 5 && num <= queue.length) {
+                if (e.shiftKey) {
+                    clearItem(num - 1);
+                } else {
+                    window.open(queue[num - 1].url, '_blank');
+                }
+            }
+        });
+
+        // Update time display every minute
+        setInterval(render, 60000);
+
+        // Initial render
+        render();
+
+    })();
+    </script>
+</body>
+</html>
