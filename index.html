@@ -26,6 +26,7 @@
             </div>
             <div class="flex items-center space-x-4">
                 <span id="slotBadge" class="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded">0 / 5</span>
+                <button id="archiveToggle" class="text-[10px] font-mono text-zinc-600 hover:text-zinc-300 cursor-pointer transition">ARCHIVE</button>
                 <button id="clearAllBtn" class="hidden text-[10px] font-mono text-zinc-600 hover:text-red-400 cursor-pointer transition">CLEAR ALL</button>
             </div>
         </div>
@@ -56,6 +57,26 @@
             <p class="text-zinc-700 text-xs mt-2">No lingering tabs or reading debt cluttering your focus space.</p>
         </div>
 
+        <!-- Archive Panel -->
+        <div id="archivePanel" class="hidden">
+            <div class="bg-zinc-900/60 border border-zinc-800/60 rounded-xl p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-[10px] font-mono uppercase text-zinc-500 tracking-widest">Archive — Cleared Links</span>
+                    <div class="flex items-center space-x-3">
+                        <span id="archiveCount" class="text-[10px] font-mono text-zinc-600"></span>
+                        <button id="clearArchiveBtn" class="text-[10px] font-mono text-zinc-600 hover:text-red-400 cursor-pointer transition">CLEAR ARCHIVE</button>
+                        <button id="archiveCloseBtn" class="text-[10px] font-mono text-zinc-600 hover:text-zinc-300 cursor-pointer transition">CLOSE</button>
+                    </div>
+                </div>
+                <div id="archiveList" class="space-y-1.5 max-h-[400px] overflow-y-auto">
+                    <!-- Archive items rendered here -->
+                </div>
+                <div id="archiveEmpty" class="hidden text-center py-8">
+                    <p class="text-zinc-600 text-xs font-mono">No cleared links yet.</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Cross-sell -->
         <div class="text-center py-2 mt-auto">
             <p class="text-[11px] text-zinc-600">
@@ -81,6 +102,7 @@
 
         const MAX_SLOTS = 5;
         const STORAGE_KEY = 'daily5_queue';
+        const ARCHIVE_KEY = 'daily5_archive';
 
         const $ = id => document.getElementById(id);
         const urlInput = $('urlInput');
@@ -91,6 +113,13 @@
         const slotBadge = $('slotBadge');
         const inputSection = $('inputSection');
         const inputMessage = $('inputMessage');
+        const archiveToggle = $('archiveToggle');
+        const archivePanel = $('archivePanel');
+        const archiveList = $('archiveList');
+        const archiveEmpty = $('archiveEmpty');
+        const archiveCount = $('archiveCount');
+        const clearArchiveBtn = $('clearArchiveBtn');
+        const archiveCloseBtn = $('archiveCloseBtn');
 
         // ---- DATA ----
 
@@ -105,6 +134,57 @@
         }
 
         let queue = loadQueue();
+
+        function loadArchive() {
+            try { return JSON.parse(localStorage.getItem(ARCHIVE_KEY)) || []; }
+            catch { return []; }
+        }
+
+        function saveArchive(archive) {
+            localStorage.setItem(ARCHIVE_KEY, JSON.stringify(archive));
+        }
+
+        function archiveItem(item) {
+            const archive = loadArchive();
+            archive.unshift({
+                ...item,
+                clearedAt: new Date().toISOString(),
+            });
+            // Keep last 100
+            if (archive.length > 100) archive.length = 100;
+            saveArchive(archive);
+        }
+
+        function renderArchive() {
+            const archive = loadArchive();
+            archiveCount.textContent = `${archive.length} item${archive.length !== 1 ? 's' : ''}`;
+
+            if (archive.length === 0) {
+                archiveEmpty.classList.remove('hidden');
+                archiveList.classList.add('hidden');
+                return;
+            }
+
+            archiveEmpty.classList.add('hidden');
+            archiveList.classList.remove('hidden');
+            archiveList.innerHTML = '';
+
+            archive.forEach(item => {
+                const domain = extractDomain(item.url);
+                const cleared = timeAgo(item.clearedAt);
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between py-1.5 px-2 rounded hover:bg-zinc-800/30 transition';
+                row.innerHTML = `
+                    <div class="flex items-center space-x-2.5 min-w-0">
+                        <span class="text-[10px] font-mono uppercase text-zinc-600 shrink-0">${domain}</span>
+                        <a href="${item.url}" target="_blank" rel="noopener noreferrer"
+                           class="text-xs text-zinc-500 hover:text-emerald-400 truncate font-mono transition">${item.url}</a>
+                    </div>
+                    <span class="text-[10px] font-mono text-zinc-700 shrink-0 ml-2">${cleared}</span>
+                `;
+                archiveList.appendChild(row);
+            });
+        }
 
         // ---- URL HELPERS ----
 
@@ -257,6 +337,9 @@
         // ---- CLEAR ----
 
         function clearItem(index) {
+            const item = queue[index];
+            if (item) archiveItem(item);
+
             const card = queueContainer.children[index];
             if (card) {
                 card.classList.add('slot-exit');
@@ -291,10 +374,32 @@
 
         clearAllBtn.addEventListener('click', () => {
             if (queue.length === 0) return;
-            if (confirm('Clear all links? This cannot be undone.')) {
+            if (confirm('Clear all links? They will be saved to the archive.')) {
+                queue.forEach(item => archiveItem(item));
                 queue = [];
                 saveQueue(queue);
                 render();
+            }
+        });
+
+        archiveToggle.addEventListener('click', () => {
+            const showing = !archivePanel.classList.contains('hidden');
+            if (showing) {
+                archivePanel.classList.add('hidden');
+            } else {
+                renderArchive();
+                archivePanel.classList.remove('hidden');
+            }
+        });
+
+        archiveCloseBtn.addEventListener('click', () => {
+            archivePanel.classList.add('hidden');
+        });
+
+        clearArchiveBtn.addEventListener('click', () => {
+            if (confirm('Clear entire archive? This cannot be undone.')) {
+                saveArchive([]);
+                renderArchive();
             }
         });
 
